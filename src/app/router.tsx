@@ -1,5 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { LoginPage } from "../pages/Login/LoginPage";
+import { AdminPage } from "../pages/Admin/AdminPage";
+import { UserPage } from "../pages/User/UserPage";
 import { useAuth } from "../auth/AuthContext";
 
 function Protected({ children }: { children: React.ReactNode }) {
@@ -11,13 +13,6 @@ function Protected({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
 }
 
-function UserHome() {
-    return <div style={{ padding: 24 }}>Пользовательский экран</div>;
-}
-function AdminHome() {
-    return <div style={{ padding: 24 }}>Админский экран</div>;
-}
-
 export function AppRouter() {
     return (
         <Routes>
@@ -26,7 +21,7 @@ export function AppRouter() {
                 path="/user"
                 element={
                     <Protected>
-                        <UserHome />
+                        <UserPage />
                     </Protected>
                 }
             />
@@ -34,7 +29,7 @@ export function AppRouter() {
                 path="/admin"
                 element={
                     <Protected>
-                        <AdminHome />
+                        <AdminPage />
                     </Protected>
                 }
             />
