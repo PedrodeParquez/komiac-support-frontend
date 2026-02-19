@@ -1,0 +1,16 @@
+:root {
+    --bg: #f3f6fa;
+    --card: #ffffff;
+    --text: #2a2f36;
+    --muted: #6b778c;
+    --primary: #4e9eff;
+    --border: #e6eef8;
+
+    --radius-lg: 28px;
+    --radius-md: 12px;
+
+    --container: 1200px;
+
+    --font-text: "Inter", system-ui, -apple-system, sans-serif;
+    --font-heading: "Montserrat", system-ui, sans-serif;
+}
