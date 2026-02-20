@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import styles from "./UserPage.module.css";
 import Logo from "../../assets/images/logo.png";
 import { useAuth } from "../../auth/AuthContext";
@@ -5,51 +6,14 @@ import { useNavigate } from "react-router-dom";
 import ExitIcon from "../../assets/icons/exit-icon.svg?react";
 import MailIcon from "../../assets/icons/mail-icon.svg?react";
 import QuestionIcon from "../../assets/icons/question-icon.svg?react";
-
-type TicketStatus = "open" | "closed";
-type TicketPriority = "low" | "medium" | "high";
-
-type Ticket = {
-    id: string;
-    title: string;
-    createdAt: string;
-    priority: TicketPriority;
-    assignee: string | null;
-    status: TicketStatus;
-};
+import { listMyTickets } from "../../api/tickets";
+import type { TicketListItem, TicketPriority, TicketStatus } from "../../api/tickets";
 
 type Activity = {
     id: string;
     text: string;
     when: string;
 };
-
-const mockTickets: Ticket[] = [
-    {
-        id: "000006",
-        title: "Подключение нового сотрудника (Astra Linux и набор ПО)",
-        createdAt: "12:31 08.02.2026",
-        priority: "medium",
-        assignee: null,
-        status: "open",
-    },
-    {
-        id: "000002",
-        title: "Замена картриджа в принтере (кабинет 210)",
-        createdAt: "09:30 19.01.2026",
-        priority: "high",
-        assignee: "Дмитрий Вяткин",
-        status: "closed",
-    },
-    {
-        id: "000001",
-        title: "Установка ПК на рабочее место сотрудника отдела",
-        createdAt: "11:23 15.02.2025",
-        priority: "low",
-        assignee: "Георгий Ким",
-        status: "closed",
-    },
-];
 
 const mockActivity: Activity[] = [
     { id: "000005", text: "Закрыто", when: "10 минут назад" },
@@ -59,7 +23,9 @@ const mockActivity: Activity[] = [
 ];
 
 function statusLabel(s: TicketStatus) {
-    return s === "open" ? "Открыто" : "Закрыто";
+    if (s === "open") return "Открыто";
+    if (s === "in_progress") return "В работе";
+    return "Закрыто";
 }
 
 function priorityLabel(p: TicketPriority) {
@@ -69,31 +35,90 @@ function priorityLabel(p: TicketPriority) {
 }
 
 export function UserPage() {
-    const { user, logout } = useAuth();
+    const { user, isAuthReady, logout } = useAuth();
     const navigate = useNavigate();
+
+    const [tickets, setTickets] = useState<TicketListItem[]>([]);
+    const [isLoading, setIsLoading] = useState(false);
+    const [err, setErr] = useState<string | null>(null);
 
     const onLogout = async () => {
         await logout();
         navigate("/login", { replace: true });
     };
 
+    // Роут-guard прямо в компоненте (чтобы не ловить 401 и странные состояния)
+    useEffect(() => {
+        if (!isAuthReady) return;
+
+        if (!user) {
+            navigate("/login", { replace: true });
+            return;
+        }
+
+        if (user.role === "support") {
+            navigate("/admin", { replace: true });
+        }
+    }, [isAuthReady, user, navigate]);
+
+    // Загрузка тикетов только когда auth готов и user точно есть
+    useEffect(() => {
+        if (!isAuthReady) return;
+        if (!user) return;
+        if (user.role !== "user") return;
+
+        let alive = true;
+
+        (async () => {
+            setIsLoading(true);
+            setErr(null);
+            try {
+                const data = await listMyTickets();
+                if (!alive) return;
+                setTickets(data);
+            } catch {
+                if (!alive) return;
+                setErr("Не удалось загрузить обращения.");
+            } finally {
+                if (!alive) return;
+                setIsLoading(false);
+            }
+        })();
+
+        return () => {
+            alive = false;
+        };
+    }, [isAuthReady, user]);
+
+    // Пока идёт проверка авторизации — можно показывать пустой экран/лоадер
+    if (!isAuthReady) {
+        return <div className={styles.page} />;
+    }
+
+    // На всякий случай, пока редирект не сработал
+    if (!user || user.role !== "user") {
+        return <div className={styles.page} />;
+    }
+
     return (
         <div className={styles.page}>
             <header className={styles.header}>
                 <div className={styles.brand}>
-                    <img className={styles.logo} src={Logo} />
+                    <img className={styles.logo} src={Logo} alt="Комиац" />
                     <div className={styles.subtitle}>Техническая поддержка</div>
                 </div>
 
                 <div className={styles.profile}>
                     <div className={styles.avatar} aria-hidden="true">
-                        {user?.name.slice(0, 1).toUpperCase()}
+                        {(user?.name?.trim()?.[0] ?? "П").toUpperCase()}
                     </div>
 
                     <div className={styles.profileMeta}>
                         <div className={styles.profileRow}>
                             <div className={styles.profileName}>{user?.name ?? "—"}</div>
-                            <button className={styles.iconBtn} type="button" onClick={onLogout} aria-label="Выйти"> <ExitIcon width={15} height={15} /> </button>
+                            <button className={styles.iconBtn} type="button" onClick={onLogout} aria-label="Выйти">
+                                <ExitIcon width={15} height={15} />
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -106,6 +131,7 @@ export function UserPage() {
                         Создать обращение
                     </button>
                 </div>
+
                 <div className={styles.grid}>
                     <section className={styles.left}>
                         <div className={styles.tableCard}>
@@ -120,41 +146,77 @@ export function UserPage() {
                                         <th>Статус</th>
                                     </tr>
                                 </thead>
+
                                 <tbody>
-                                    {mockTickets.map((t) => (
-                                        <tr key={`${t.id}-${t.createdAt}`} className={styles.row}>
-                                            <td>
-                                                <button className={styles.link} type="button">
-                                                    {t.id}
-                                                </button>
-                                            </td>
-                                            <td className={styles.ellipsis} title={t.title}>
-                                                {t.title}
-                                            </td>
-                                            <td className={styles.mono}>{t.createdAt}</td>
-                                            <td>{priorityLabel(t.priority)}</td>
-                                            <td className={t.assignee ? "" : styles.muted}>
-                                                {t.assignee ?? "Ещё не назначен"}
-                                            </td>
-                                            <td>
-                                                <span
-                                                    className={`${styles.badge} ${t.status === "open" ? styles.badgeOpen : styles.badgeClosed
-                                                        }`}
-                                                >
-                                                    {statusLabel(t.status)}
-                                                </span>
+                                    {isLoading && (
+                                        <tr>
+                                            <td className={styles.empty} colSpan={6}>
+                                                Загрузка...
                                             </td>
                                         </tr>
-                                    ))}
+                                    )}
+
+                                    {!isLoading && err && (
+                                        <tr>
+                                            <td className={styles.empty} colSpan={6}>
+                                                {err}
+                                            </td>
+                                        </tr>
+                                    )}
+
+                                    {!isLoading &&
+                                        !err &&
+                                        tickets.map((t) => (
+                                            <tr key={t.id} className={styles.row}>
+                                                <td>
+                                                    <button className={styles.link} type="button">
+                                                        {t.ticketNumber}
+                                                    </button>
+                                                </td>
+
+                                                <td className={styles.ellipsis} title={t.title}>
+                                                    {t.title}
+                                                </td>
+
+                                                <td className={styles.mono}>{t.createdAt}</td>
+                                                <td>{priorityLabel(t.priority)}</td>
+
+                                                <td className={t.assigneeName ? "" : styles.muted}>
+                                                    {t.assigneeName ?? "Ещё не назначен"}
+                                                </td>
+
+                                                <td>
+                                                    <span
+                                                        className={`${styles.badge} ${t.status === "open"
+                                                            ? styles.badgeOpen
+                                                            : t.status === "in_progress"
+                                                                ? (styles as any).badgeProgress ?? styles.badgeOpen
+                                                                : styles.badgeClosed
+                                                            }`}
+                                                    >
+                                                        {statusLabel(t.status)}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        ))}
+
+                                    {!isLoading && !err && tickets.length === 0 && (
+                                        <tr>
+                                            <td className={styles.empty} colSpan={6}>
+                                                Обращений пока нет
+                                            </td>
+                                        </tr>
+                                    )}
                                 </tbody>
                             </table>
                         </div>
+
                         <div className={styles.cardsUnderTable} aria-hidden="true">
                             <div className={styles.card}>
                                 <div className={styles.cardTitle}>Последние действия</div>
                                 <div className={styles.activityList}>
-                                    {mockActivity.map((a) => (
-                                        <div className={styles.activityItem}>
+                                    {mockActivity.map((a, idx) => (
+                                        <div key={idx} className={styles.activityItem}>
                                             <button className={styles.activityLink} type="button">
                                                 {a.id}
                                             </button>
@@ -166,32 +228,41 @@ export function UserPage() {
                                     ))}
                                 </div>
                             </div>
+
                             <div className={styles.card}>
                                 <div className={styles.cardTitle}>Нужна помощь?</div>
                                 <div className={styles.helpList}>
                                     <button className={styles.helpItem} type="button">
-                                        <span className={styles.helpIcon} aria-hidden="true"><QuestionIcon width={18} height={18} /></span>
+                                        <span className={styles.helpIcon} aria-hidden="true">
+                                            <QuestionIcon width={18} height={18} />
+                                        </span>
                                         <span className={styles.helpText}>Часто задаваемые вопросы</span>
                                     </button>
+
                                     <button className={styles.helpItem} type="button">
-                                        <span className={styles.helpIcon} aria-hidden="true"><MailIcon width={18} height={18} /></span>
+                                        <span className={styles.helpIcon} aria-hidden="true">
+                                            <MailIcon width={18} height={18} />
+                                        </span>
                                         <span className={styles.helpText}>Напишите нам</span>
                                     </button>
                                 </div>
                             </div>
                         </div>
                     </section>
+
                     <aside className={styles.right}>
-                        <button className={styles.createBtnSide} type="button">Создать обращение</button>
+                        <button className={styles.createBtnSide} type="button">
+                            Создать обращение
+                        </button>
+
                         <div className={styles.card}>
                             <div className={styles.cardTitle}>Последние действия</div>
                             <div className={styles.activityList}>
-                                {mockActivity.map((a) => (
-                                    <div className={styles.activityItem}>
+                                {mockActivity.map((a, idx) => (
+                                    <div key={idx} className={styles.activityItem}>
                                         <button className={styles.activityLink} type="button">
                                             {a.id}
                                         </button>
-
                                         <div>
                                             <span className={styles.activityText}>{a.text}</span>
                                             <span className={styles.activityWhen}>{a.when}</span>
@@ -200,15 +271,21 @@ export function UserPage() {
                                 ))}
                             </div>
                         </div>
+
                         <div className={styles.card}>
                             <div className={styles.cardTitle}>Нужна помощь?</div>
                             <div className={styles.helpList}>
                                 <button className={styles.helpItem} type="button">
-                                    <span className={styles.helpIcon} aria-hidden="true"><QuestionIcon width={18} height={18} /></span>
+                                    <span className={styles.helpIcon} aria-hidden="true">
+                                        <QuestionIcon width={18} height={18} />
+                                    </span>
                                     <span className={styles.helpText}>Часто задаваемые вопросы</span>
                                 </button>
+
                                 <button className={styles.helpItem} type="button">
-                                    <span className={styles.helpIcon} aria-hidden="true"><MailIcon width={18} height={18} /></span>
+                                    <span className={styles.helpIcon} aria-hidden="true">
+                                        <MailIcon width={18} height={18} />
+                                    </span>
                                     <span className={styles.helpText}>Напишите нам</span>
                                 </button>
                             </div>

@@ -1,112 +1,14 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import styles from "./AdminPage.module.css";
 import Logo from "../../assets/images/logo.png";
 import ExitIcon from "../../assets/icons/exit-icon.svg?react";
 import SearchIcon from "../../assets/icons/search-icon.svg?react";
 import { useAuth } from "../../auth/AuthContext";
-
-type TicketStatus = "open" | "in_progress" | "closed";
-type TicketPriority = "low" | "medium" | "high";
-
-type Ticket = {
-    id: string;
-    title: string;
-    createdAt: string;
-    priority: TicketPriority;
-    assignee: string | null;
-    status: TicketStatus;
-
-    topic?: string;
-    fromName?: string;
-    dept?: string;
-    phone?: string;
-    message?: string;
-};
+import { addTicketMessage, assignTicket, getTicket, listTickets } from "../../api/tickets";
+import type { TicketDetail, TicketListItem, TicketPriority, TicketStatus } from "../../api/tickets";
 
 type TabKey = "new" | "in_progress" | "closed" | "all";
-
-const mockTickets: Ticket[] = [
-    {
-        id: "000007",
-        title: "Не работает интернет на рабочем месте в кабинете 305",
-        createdAt: "10:48 07.02.2026",
-        priority: "high",
-        assignee: null,
-        status: "open",
-        topic: "Не работает интернет на рабочем месте",
-        fromName: "Ирина Белова",
-        dept: "Бухгалтерский отдел",
-        phone: "412-321",
-        message: "Интернет не работает со вчерашнего вечера, прошу помочь.",
-    },
-    {
-        id: "000006",
-        title: "Подключение нового сотрудника (Astra Linux и набор ПО)",
-        createdAt: "08:23 06.02.2026",
-        priority: "medium",
-        assignee: null,
-        status: "open",
-        topic: "Подключение нового сотрудника",
-        fromName: "Ирина Белова",
-        dept: "Бухгалтерский отдел",
-        phone: "412-321",
-        message:
-            "Здравствуйте, к нам пришёл новый сотрудник в отдел, нужно установить Astra Linux и все необходимые программы на рабочий ПК.",
-    },
-    {
-        id: "000005",
-        title: "Забыла пароль от учётной записи",
-        createdAt: "09:40 08.02.2026",
-        priority: "low",
-        assignee: "Дмитрий Вяткин",
-        status: "in_progress",
-        topic: "Забыла пароль от учётной записи",
-        fromName: "Марина Шпегель",
-        dept: "Отдел кадров",
-        phone: "410-100",
-        message: "Не получается войти в учетную запись, помогите восстановить пароль.",
-    },
-    {
-        id: "000004",
-        title: "Восстановление учётной записи после смены ПК",
-        createdAt: "11:23 07.02.2026",
-        priority: "medium",
-        assignee: "Иван Машин",
-        status: "in_progress",
-        topic: "Восстановление учётной записи",
-        fromName: "Ольга Иванова",
-        dept: "Склад",
-        phone: "411-222",
-        message: "После смены ПК не могу зайти в систему, нужна помощь.",
-    },
-    {
-        id: "000003",
-        title: "Не работает интернет на 2 этаже, возможно проблема с роутером",
-        createdAt: "11:20 01.02.2026",
-        priority: "high",
-        assignee: "Иван Машин",
-        status: "closed",
-        topic: "Не работает интернет на 2 этаже",
-        fromName: "Алексей Петров",
-        dept: "Продажи",
-        phone: "400-111",
-        message: "Интернет восстановился, спасибо.",
-    },
-    {
-        id: "000002",
-        title: "Замена картриджа в принтере (кабинет 210)",
-        createdAt: "09:30 19.01.2026",
-        priority: "medium",
-        assignee: "Дмитрий Вяткин",
-        status: "closed",
-        topic: "Замена картриджа в принтере",
-        fromName: "Екатерина Смирнова",
-        dept: "Бухгалтерия",
-        phone: "402-222",
-        message: "Картридж заменен, всё работает.",
-    },
-];
 
 function statusLabel(s: TicketStatus) {
     if (s === "open") return "Открыто";
@@ -120,13 +22,6 @@ function priorityLabel(p: TicketPriority) {
     return "Низкий";
 }
 
-function tabToStatuses(tab: TabKey): TicketStatus[] {
-    if (tab === "new") return ["open"];
-    if (tab === "in_progress") return ["in_progress"];
-    if (tab === "closed") return ["closed"];
-    return ["open", "in_progress", "closed"];
-}
-
 export function AdminPage() {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
@@ -134,64 +29,159 @@ export function AdminPage() {
     const [tab, setTab] = useState<TabKey>("new");
     const [query, setQuery] = useState("");
 
-    const filtered = useMemo(() => {
-        const allowed = new Set(tabToStatuses(tab));
-        const q = query.trim().toLowerCase();
+    const [list, setList] = useState<TicketListItem[]>([]);
+    const [isListLoading, setIsListLoading] = useState(false);
+    const [listError, setListError] = useState<string | null>(null);
 
-        return mockTickets.filter((t) => {
-            if (!allowed.has(t.status)) return false;
-            if (!q) return true;
+    const [selectedId, setSelectedId] = useState<number | null>(null);
+    const [detail, setDetail] = useState<TicketDetail | null>(null);
+    const [isDetailLoading, setIsDetailLoading] = useState(false);
+    const [detailError, setDetailError] = useState<string | null>(null);
 
-            return t.id.includes(q) || t.title.toLowerCase().includes(q);
-        });
-    }, [tab, query]);
+    const [reply, setReply] = useState("");
+    const [isSending, setIsSending] = useState(false);
 
-    const [selectedId, setSelectedId] = useState<string>(mockTickets[0]?.id ?? "000001");
+    const [assigneeId, setAssigneeId] = useState<number | "">("");
 
-    const selected = useMemo(() => {
-        const inFiltered = filtered.find((t) => t.id === selectedId);
-        if (inFiltered) return inFiltered;
-
-        if (filtered[0]) return filtered[0];
-
-        return mockTickets[0];
-    }, [filtered, selectedId]);
-
-    const nextSelectedId = useMemo(() => {
-        if (filtered.some((t) => t.id === selectedId)) return selectedId;
-        return filtered[0]?.id ?? selectedId;
-    }, [filtered, selectedId]);
-
-    if (nextSelectedId !== selectedId) {
-        setSelectedId(nextSelectedId);
-    }
+    const filtered = useMemo(() => list, [list]);
 
     const onLogout = async () => {
         await logout();
         navigate("/login", { replace: true });
     };
 
-    const isClosed = selected.status === "closed";
+    useEffect(() => {
+        let alive = true;
+
+        (async () => {
+            setIsListLoading(true);
+            setListError(null);
+            try {
+                const data = await listTickets({ tab, q: query });
+
+                const arr = Array.isArray(data)
+                    ? data
+                    : Array.isArray((data as any)?.tickets)
+                        ? (data as any).tickets
+                        : Array.isArray((data as any)?.items)
+                            ? (data as any).items
+                            : [];
+
+                if (!alive) return;
+                setList(arr);
+                if (data.length > 0) {
+                    setSelectedId((prev) => (prev && data.some((x) => x.id === prev) ? prev : data[0].id));
+                } else {
+                    setSelectedId(null);
+                    setDetail(null);
+                }
+            } catch {
+                if (!alive) return;
+                setListError("Не удалось загрузить обращения.");
+            } finally {
+                if (!alive) return;
+                setIsListLoading(false);
+            }
+        })();
+
+        return () => {
+            alive = false;
+        };
+    }, [tab, query]);
+
+    useEffect(() => {
+        if (!selectedId) return;
+
+        let alive = true;
+
+        (async () => {
+            setIsDetailLoading(true);
+            setDetailError(null);
+            try {
+                const d = await getTicket(selectedId);
+                if (!alive) return;
+                setDetail(d);
+                setAssigneeId(d.assigneeId ?? "");
+                setReply("");
+            } catch {
+                if (!alive) return;
+                setDetailError("Не удалось загрузить обращение.");
+                setDetail(null);
+            } finally {
+                if (!alive) return;
+                setIsDetailLoading(false);
+            }
+        })();
+
+        return () => {
+            alive = false;
+        };
+    }, [selectedId]);
+
+    const isClosed = detail?.status === "closed";
+
+    const onAssign = async (v: number) => {
+        if (!detail) return;
+        try {
+            const updated = await assignTicket(detail.id, v);
+            setDetail(updated);
+            setAssigneeId(updated.assigneeId ?? "");
+            setList((prev) =>
+                prev.map((x) =>
+                    x.id === updated.id
+                        ? {
+                            ...x,
+                            status: updated.status,
+                            assigneeName: updated.assigneeName ?? null,
+                        }
+                        : x
+                )
+            );
+        } catch {
+            setDetailError("Не удалось назначить ответственного.");
+        }
+    };
+
+    const onSend = async () => {
+        if (!detail) return;
+        const msg = reply.trim();
+        if (!msg) return;
+
+        setIsSending(true);
+        try {
+            await addTicketMessage(detail.id, msg);
+            setReply("");
+        } catch {
+            setDetailError("Не удалось отправить сообщение.");
+        } finally {
+            setIsSending(false);
+        }
+    };
 
     return (
         <div className={styles.page}>
             <header className={styles.header}>
                 <div className={styles.brand}>
-                    <img className={styles.logo} src={Logo} />
+                    <img className={styles.logo} src={Logo} alt="Комиац" />
                     <div className={styles.subtitle}>Техническая поддержка</div>
                 </div>
+
                 <div className={styles.profile}>
                     <div className={styles.avatar} aria-hidden="true">
-                        {user?.name.slice(0, 1).toUpperCase()}
+                        {(user?.name?.trim()?.[0] ?? "П").toUpperCase()}
                     </div>
+
                     <div className={styles.profileMeta}>
                         <div className={styles.profileRow}>
                             <div className={styles.profileName}>{user?.name ?? "—"}</div>
-                            <button className={styles.iconBtn} type="button" onClick={onLogout} aria-label="Выйти"> <ExitIcon width={15} height={15} /> </button>
+                            <button className={styles.iconBtn} type="button" onClick={onLogout} aria-label="Выйти">
+                                <ExitIcon width={15} height={15} />
+                            </button>
                         </div>
                     </div>
                 </div>
             </header>
+
             <main className={styles.content}>
                 <div className={styles.topRow}>
                     <div className={styles.topLeft}>
@@ -199,11 +189,7 @@ export function AdminPage() {
 
                         <div className={styles.tabsRow}>
                             <nav className={styles.tabs} aria-label="Фильтр обращений">
-                                <button
-                                    className={`${styles.tab} ${tab === "new" ? styles.tabActive : ""}`}
-                                    type="button"
-                                    onClick={() => setTab("new")}
-                                >
+                                <button className={`${styles.tab} ${tab === "new" ? styles.tabActive : ""}`} type="button" onClick={() => setTab("new")}>
                                     Новые
                                 </button>
                                 <button
@@ -213,18 +199,10 @@ export function AdminPage() {
                                 >
                                     В работе
                                 </button>
-                                <button
-                                    className={`${styles.tab} ${tab === "closed" ? styles.tabActive : ""}`}
-                                    type="button"
-                                    onClick={() => setTab("closed")}
-                                >
+                                <button className={`${styles.tab} ${tab === "closed" ? styles.tabActive : ""}`} type="button" onClick={() => setTab("closed")}>
                                     Закрытые
                                 </button>
-                                <button
-                                    className={`${styles.tab} ${tab === "all" ? styles.tabActive : ""}`}
-                                    type="button"
-                                    onClick={() => setTab("all")}
-                                >
+                                <button className={`${styles.tab} ${tab === "all" ? styles.tabActive : ""}`} type="button" onClick={() => setTab("all")}>
                                     Все
                                 </button>
                             </nav>
@@ -260,51 +238,71 @@ export function AdminPage() {
                                         <th>Статус</th>
                                     </tr>
                                 </thead>
+
                                 <tbody>
-                                    {filtered.map((t) => (
-                                        <tr
-                                            key={t.id}
-                                            className={`${styles.row} ${t.id === selectedId ? styles.rowActive : ""}`}
-                                            onClick={() => setSelectedId(t.id)}
-                                            role="button"
-                                            tabIndex={0}
-                                            onKeyDown={(e) => {
-                                                if (e.key === "Enter" || e.key === " ") setSelectedId(t.id);
-                                            }}
-                                        >
-                                            <td>
-                                                <button
-                                                    className={styles.link}
-                                                    type="button"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setSelectedId(t.id);
-                                                    }}
-                                                >
-                                                    {t.id}
-                                                </button>
-                                            </td>
-                                            <td className={styles.ellipsis} title={t.title}>
-                                                {t.title}
-                                            </td>
-                                            <td className={styles.mono}>{t.createdAt}</td>
-                                            <td>{priorityLabel(t.priority)}</td>
-                                            <td className={t.assignee ? "" : styles.muted}>{t.assignee ?? "Ещё не назначен"}</td>
-                                            <td>
-                                                <span
-                                                    className={`${styles.badge} ${t.status === "open"
-                                                        ? styles.badgeOpen
-                                                        : t.status === "in_progress"
-                                                            ? styles.badgeProgress
-                                                            : styles.badgeClosed
-                                                        }`}
-                                                >
-                                                    {statusLabel(t.status)}
-                                                </span>
+                                    {isListLoading && (
+                                        <tr>
+                                            <td className={styles.empty} colSpan={6}>
+                                                Загрузка...
                                             </td>
                                         </tr>
-                                    ))}
-                                    {filtered.length === 0 && (
+                                    )}
+
+                                    {!isListLoading && listError && (
+                                        <tr>
+                                            <td className={styles.empty} colSpan={6}>
+                                                {listError}
+                                            </td>
+                                        </tr>
+                                    )}
+
+                                    {!isListLoading &&
+                                        !listError &&
+                                        filtered.map((t) => (
+                                            <tr
+                                                key={t.id}
+                                                className={`${styles.row} ${t.id === selectedId ? styles.rowActive : ""}`}
+                                                onClick={() => setSelectedId(t.id)}
+                                                role="button"
+                                                tabIndex={0}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === "Enter" || e.key === " ") setSelectedId(t.id);
+                                                }}
+                                            >
+                                                <td>
+                                                    <button
+                                                        className={styles.link}
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setSelectedId(t.id);
+                                                        }}
+                                                    >
+                                                        {t.ticketNumber}
+                                                    </button>
+                                                </td>
+
+                                                <td className={styles.ellipsis} title={t.title}>
+                                                    {t.title}
+                                                </td>
+
+                                                <td className={styles.mono}>{t.createdAt}</td>
+                                                <td>{priorityLabel(t.priority)}</td>
+
+                                                <td className={t.assigneeName ? "" : styles.muted}>{t.assigneeName ?? "Ещё не назначен"}</td>
+
+                                                <td>
+                                                    <span
+                                                        className={`${styles.badge} ${t.status === "open" ? styles.badgeOpen : t.status === "in_progress" ? styles.badgeProgress : styles.badgeClosed
+                                                            }`}
+                                                    >
+                                                        {statusLabel(t.status)}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        ))}
+
+                                    {!isListLoading && !listError && filtered.length === 0 && (
                                         <tr>
                                             <td className={styles.empty} colSpan={6}>
                                                 Ничего не найдено
@@ -315,60 +313,89 @@ export function AdminPage() {
                             </table>
                         </div>
                     </section>
+
                     <aside className={styles.right}>
                         <div className={styles.detailCard}>
-                            <div className={styles.detailHead}>
-                                <div className={styles.detailTitle}>Обращение {selected.id}</div>
-                                <div className={styles.detailDate}>от {selected.createdAt}</div>
-                            </div>
-                            <div className={styles.detailGrid}>
-                                <div className={styles.detailRow}>
-                                    <div className={styles.detailLabel}>Тема:</div>
-                                    <div className={styles.detailValue}>{selected.topic ?? selected.title ?? "—"}</div>
-                                </div>
-                                <div className={styles.detailRow}>
-                                    <div className={styles.detailLabel}>От кого:</div>
-                                    <div className={styles.detailValue}>{selected.fromName ?? "—"}</div>
-                                </div>
-                                <div className={styles.detailRow}>
-                                    <div className={styles.detailLabel}>Отдел:</div>
-                                    <div className={styles.detailValue}>{selected.dept ?? "—"}</div>
-                                </div>
-                                <div className={styles.detailRow}>
-                                    <div className={styles.detailLabel}>Телефон:</div>
-                                    <div className={styles.detailValue}>{selected.phone ?? "—"}</div>
-                                </div>
-                                <div className={styles.detailRowCol}>
-                                    <div className={styles.detailLabel}>Сообщение</div>
-                                    <textarea
-                                        className={styles.textarea}
-                                        defaultValue={selected.message ?? ""}
-                                        rows={3}
-                                        readOnly
-                                    />
-                                </div>
-                                <div className={styles.detailRowCol}>
-                                    <div className={styles.detailLabel}>Ответственный</div>
-                                    <select className={styles.select} defaultValue="" disabled={isClosed}>
-                                        <option value="" disabled>
-                                            Выбрать сотрудника
-                                        </option>
-                                        <option>Иван Машин</option>
-                                        <option>Дмитрий Вяткин</option>
-                                    </select>
-                                </div>
-                                {!isClosed && (
-                                    <>
+                            {isDetailLoading && <div className={styles.empty}>Загрузка...</div>}
+                            {!isDetailLoading && detailError && <div className={styles.empty}>{detailError}</div>}
+
+                            {!isDetailLoading && !detailError && detail && (
+                                <>
+                                    <div className={styles.detailHead}>
+                                        <div className={styles.detailTitle}>Обращение {detail.ticketNumber}</div>
+                                        <div className={styles.detailDate}>от {detail.createdAt}</div>
+                                    </div>
+
+                                    <div className={styles.detailGrid}>
+                                        <div className={styles.detailRow}>
+                                            <div className={styles.detailLabel}>Тема:</div>
+                                            <div className={styles.detailValue}>{detail.topic || detail.title || "—"}</div>
+                                        </div>
+
+                                        <div className={styles.detailRow}>
+                                            <div className={styles.detailLabel}>От кого:</div>
+                                            <div className={styles.detailValue}>{detail.fromName || "—"}</div>
+                                        </div>
+
+                                        <div className={styles.detailRow}>
+                                            <div className={styles.detailLabel}>Отдел:</div>
+                                            <div className={styles.detailValue}>{detail.dept ?? "—"}</div>
+                                        </div>
+
+                                        <div className={styles.detailRow}>
+                                            <div className={styles.detailLabel}>Телефон:</div>
+                                            <div className={styles.detailValue}>{detail.phone ?? "—"}</div>
+                                        </div>
+
                                         <div className={styles.detailRowCol}>
                                             <div className={styles.detailLabel}>Сообщение</div>
-                                            <textarea className={styles.textarea} placeholder="Напишите что-нибудь" rows={3} />
+                                            <textarea className={styles.textarea} value={detail.message ?? ""} rows={3} readOnly />
                                         </div>
-                                        <button className={styles.primaryBtn} type="button">
-                                            Отправить
-                                        </button>
-                                    </>
-                                )}
-                            </div>
+
+                                        <div className={styles.detailRowCol}>
+                                            <div className={styles.detailLabel}>Ответственный</div>
+                                            <select
+                                                className={styles.select}
+                                                value={assigneeId}
+                                                disabled={!!isClosed}
+                                                onChange={(e) => {
+                                                    const v = Number(e.target.value);
+                                                    if (!Number.isFinite(v)) return;
+                                                    setAssigneeId(v);
+                                                    onAssign(v);
+                                                }}
+                                            >
+                                                <option value="" disabled>
+                                                    Выбрать сотрудника
+                                                </option>
+                                                <option value={1}>Иван Машин</option>
+                                                <option value={2}>Дмитрий Вяткин</option>
+                                            </select>
+                                        </div>
+
+                                        {!isClosed && (
+                                            <>
+                                                <div className={styles.detailRowCol}>
+                                                    <div className={styles.detailLabel}>Сообщение</div>
+                                                    <textarea
+                                                        className={styles.textarea}
+                                                        placeholder="Напишите что-нибудь"
+                                                        rows={3}
+                                                        value={reply}
+                                                        onChange={(e) => setReply(e.target.value)}
+                                                    />
+                                                </div>
+
+                                                <button className={styles.primaryBtn} type="button" onClick={onSend} disabled={isSending}>
+                                                    {isSending ? "Отправка..." : "Отправить"}
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
+                                </>
+                            )}
+
+                            {!isDetailLoading && !detailError && !detail && <div className={styles.empty}>Выберите обращение</div>}
                         </div>
                     </aside>
                 </div>

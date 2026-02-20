@@ -1,21 +1,20 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import type { User } from "./types";
-import { clearAccessToken, getAccessToken, setAccessToken } from "./tokenStorage";
-import { loginRequest, logoutRequest, meRequest, refreshRequest } from "../api/auth";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
+import * as authApi from "../api/auth";
+import { clearTokens, getAccessToken } from "./tokenStorage";
 
-type AuthState = {
+type User = authApi.Me;
+
+type AuthContextValue = {
     user: User | null;
     isAuthReady: boolean;
-};
-
-type AuthContextValue = AuthState & {
-    login: (data: { login: string; password: string; remember: boolean }) => Promise<void>;
+    login: (p: authApi.LoginRequest) => Promise<void>;
     logout: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+export function AuthProvider({ children }: { children: ReactNode }) {
     const [user, setUser] = useState<User | null>(null);
     const [isAuthReady, setIsAuthReady] = useState(false);
 
@@ -24,18 +23,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             try {
                 const token = getAccessToken();
 
-                if (token) {
-                    const me = await meRequest();
-                    setUser(me.user);
+                // если токена нет — не дергаем /auth/me и не ловим 401 на /login
+                if (!token) {
+                    setUser(null);
                     return;
                 }
 
-                const refreshed = await refreshRequest();
-                setAccessToken(refreshed.accessToken, false);
-                const me = await meRequest();
-                setUser(me.user);
+                const me = await authApi.me();
+                setUser(me);
             } catch {
-                clearAccessToken();
+                clearTokens();
                 setUser(null);
             } finally {
                 setIsAuthReady(true);
@@ -43,22 +40,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         })();
     }, []);
 
-    const login: AuthContextValue["login"] = async ({ login, password, remember }) => {
-        const data = await loginRequest({ login, password });
-        setAccessToken(data.accessToken, remember);
-        setUser(data.user);
+    const login = async (p: authApi.LoginRequest) => {
+        const u = await authApi.login(p);
+        setUser(u);
     };
 
-    const logout: AuthContextValue["logout"] = async () => {
-        try {
-            await logoutRequest();
-        } finally {
-            clearAccessToken();
-            setUser(null);
-        }
+    const logout = async () => {
+        await authApi.logout();
+        setUser(null);
     };
 
-    const value = useMemo(
+    const value = useMemo<AuthContextValue>(
         () => ({ user, isAuthReady, login, logout }),
         [user, isAuthReady]
     );
@@ -68,6 +60,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 export function useAuth() {
     const ctx = useContext(AuthContext);
-    if (!ctx) throw new Error("useAuth must be used inside AuthProvider");
+    if (!ctx) throw new Error("useAuth must be used within AuthProvider");
     return ctx;
 }
