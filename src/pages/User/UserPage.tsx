@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import styles from "./UserPage.module.css";
 import Logo from "../../assets/images/logo.png";
 import { useAuth } from "../../auth/AuthContext";
@@ -6,14 +6,21 @@ import { useNavigate } from "react-router-dom";
 import ExitIcon from "../../assets/icons/exit-icon.svg?react";
 import MailIcon from "../../assets/icons/mail-icon.svg?react";
 import QuestionIcon from "../../assets/icons/question-icon.svg?react";
-import { listMyTickets } from "../../api/tickets";
-import type { TicketListItem, TicketPriority, TicketStatus } from "../../api/tickets";
+import { CreateTicketModal, type CreateTicketPayload } from "../../components/CreateTicketModal/CreateTicketModal";
+import { getAccessToken } from "../../auth/tokenStorage";
+import { refresh } from "../../api/auth";
 
-type Activity = {
-    id: string;
-    text: string;
-    when: string;
+type TicketListItem = {
+    id: number;
+    ticketNumber: string;
+    title: string;
+    createdAt: string;
+    priority: string;
+    status: string;
+    assigneeName?: string;
 };
+
+type Activity = { id: string; text: string; when: string };
 
 const mockActivity: Activity[] = [
     { id: "000005", text: "Закрыто", when: "10 минут назад" },
@@ -22,83 +29,140 @@ const mockActivity: Activity[] = [
     { id: "000005", text: "Обращение отправлено", when: "45 минут назад" },
 ];
 
-function statusLabel(s: TicketStatus) {
+function statusLabel(s: string) {
     if (s === "open") return "Открыто";
     if (s === "in_progress") return "В работе";
+    if (s === "resolved") return "Решено";
     return "Закрыто";
 }
 
-function priorityLabel(p: TicketPriority) {
+function priorityLabel(p: string) {
     if (p === "high") return "Высокий";
     if (p === "medium") return "Средний";
     return "Низкий";
 }
 
+async function authedFetch(path: string, init?: RequestInit): Promise<Response> {
+    const baseUrl = import.meta.env.VITE_API_URL as string;
+    if (!baseUrl) {
+        throw new Error("VITE_API_URL is empty. Set it in .env like http://localhost:8080");
+    }
+
+    const doFetch = (token: string | null) => {
+        const headers = new Headers(init?.headers);
+
+        if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+        if (token) headers.set("Authorization", `Bearer ${token}`);
+
+        return fetch(`${baseUrl}${path}`, {
+            ...init,
+            headers,
+        });
+    };
+
+    const token1 = getAccessToken();
+    let res = await doFetch(token1);
+    if (res.status !== 401) return res;
+
+    try {
+        await refresh();
+
+        const token2 = getAccessToken();
+        res = await doFetch(token2);
+        return res;
+    } catch {
+        return res;
+    }
+}
+
 export function UserPage() {
-    const { user, isAuthReady, logout } = useAuth();
+    const { user, logout } = useAuth();
     const navigate = useNavigate();
 
+    const [isCreateOpen, setIsCreateOpen] = useState(false);
     const [tickets, setTickets] = useState<TicketListItem[]>([]);
-    const [isLoading, setIsLoading] = useState(false);
-    const [err, setErr] = useState<string | null>(null);
+    const [loading, setLoading] = useState(true);
+
+    const openCreate = () => setIsCreateOpen(true);
+    const closeCreate = () => setIsCreateOpen(false);
+
+    const avatarLetter = useMemo(() => {
+        const n = user?.name?.trim();
+        return n ? n.slice(0, 1).toUpperCase() : "—";
+    }, [user?.name]);
 
     const onLogout = async () => {
         await logout();
         navigate("/login", { replace: true });
     };
 
-    // Роут-guard прямо в компоненте (чтобы не ловить 401 и странные состояния)
-    useEffect(() => {
-        if (!isAuthReady) return;
+    const loadMyTickets = async () => {
+        try {
+            setLoading(true);
 
-        if (!user) {
-            navigate("/login", { replace: true });
-            return;
-        }
+            const res = await authedFetch("/tickets/my", { method: "GET" });
 
-        if (user.role === "support") {
-            navigate("/admin", { replace: true });
-        }
-    }, [isAuthReady, user, navigate]);
-
-    // Загрузка тикетов только когда auth готов и user точно есть
-    useEffect(() => {
-        if (!isAuthReady) return;
-        if (!user) return;
-        if (user.role !== "user") return;
-
-        let alive = true;
-
-        (async () => {
-            setIsLoading(true);
-            setErr(null);
-            try {
-                const data = await listMyTickets();
-                if (!alive) return;
-                setTickets(data);
-            } catch {
-                if (!alive) return;
-                setErr("Не удалось загрузить обращения.");
-            } finally {
-                if (!alive) return;
-                setIsLoading(false);
+            if (res.status === 401) {
+                alert("Сессия истекла. Пожалуйста, войдите снова.");
+                await onLogout();
+                return;
             }
-        })();
 
-        return () => {
-            alive = false;
-        };
-    }, [isAuthReady, user]);
+            if (!res.ok) {
+                const text = await res.text();
+                console.error("Failed to load tickets:", res.status, text);
+                alert(`Ошибка загрузки обращений: ${res.status}`);
+                return;
+            }
 
-    // Пока идёт проверка авторизации — можно показывать пустой экран/лоадер
-    if (!isAuthReady) {
-        return <div className={styles.page} />;
-    }
+            const data = (await res.json()) as { tickets: TicketListItem[] };
+            const list = Array.isArray(data.tickets) ? data.tickets : [];
+            const sorted = [...list].sort((a, b) => b.id - a.id);
 
-    // На всякий случай, пока редирект не сработал
-    if (!user || user.role !== "user") {
-        return <div className={styles.page} />;
-    }
+            setTickets(sorted);
+        } catch (e) {
+            console.error(e);
+            alert("Ошибка сети при загрузке обращений (см. console).");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        void loadMyTickets();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const handleCreate = async (payload: CreateTicketPayload) => {
+        try {
+            const body = {
+                title: payload.title.trim(),
+                description: payload.description.trim(),
+                priority: payload.priority,
+            };
+
+            const res = await authedFetch("/tickets", {
+                method: "POST",
+                body: JSON.stringify(body),
+            });
+
+            if (!res.ok) {
+                const text = await res.text();
+                console.error("Create ticket failed:", res.status, text);
+                alert(`Ошибка создания обращения: ${res.status}`);
+                return;
+            }
+
+            const data = (await res.json()) as { ticket: any };
+            console.log("Created ticket:", data.ticket);
+
+            closeCreate();
+
+            await loadMyTickets();
+        } catch (e) {
+
+        }
+    };
 
     return (
         <div className={styles.page}>
@@ -110,7 +174,7 @@ export function UserPage() {
 
                 <div className={styles.profile}>
                     <div className={styles.avatar} aria-hidden="true">
-                        {(user?.name?.trim()?.[0] ?? "П").toUpperCase()}
+                        {avatarLetter}
                     </div>
 
                     <div className={styles.profileMeta}>
@@ -127,7 +191,7 @@ export function UserPage() {
             <main className={styles.content}>
                 <div className={styles.topRow}>
                     <h1 className={styles.h1}>Мои обращения</h1>
-                    <button className={styles.createBtnTop} type="button">
+                    <button className={styles.createBtnTop} type="button" onClick={openCreate}>
                         Создать обращение
                     </button>
                 </div>
@@ -148,24 +212,19 @@ export function UserPage() {
                                 </thead>
 
                                 <tbody>
-                                    {isLoading && (
+                                    {loading ? (
                                         <tr>
-                                            <td className={styles.empty} colSpan={6}>
+                                            <td colSpan={6} className={styles.muted} style={{ padding: 14 }}>
                                                 Загрузка...
                                             </td>
                                         </tr>
-                                    )}
-
-                                    {!isLoading && err && (
+                                    ) : tickets.length === 0 ? (
                                         <tr>
-                                            <td className={styles.empty} colSpan={6}>
-                                                {err}
+                                            <td colSpan={6} className={styles.emptyCell}>
+                                                Пока нет обращений
                                             </td>
                                         </tr>
-                                    )}
-
-                                    {!isLoading &&
-                                        !err &&
+                                    ) : (
                                         tickets.map((t) => (
                                             <tr key={t.id} className={styles.row}>
                                                 <td>
@@ -173,39 +232,24 @@ export function UserPage() {
                                                         {t.ticketNumber}
                                                     </button>
                                                 </td>
-
                                                 <td className={styles.ellipsis} title={t.title}>
                                                     {t.title}
                                                 </td>
-
                                                 <td className={styles.mono}>{t.createdAt}</td>
                                                 <td>{priorityLabel(t.priority)}</td>
-
                                                 <td className={t.assigneeName ? "" : styles.muted}>
                                                     {t.assigneeName ?? "Ещё не назначен"}
                                                 </td>
-
                                                 <td>
                                                     <span
-                                                        className={`${styles.badge} ${t.status === "open"
-                                                            ? styles.badgeOpen
-                                                            : t.status === "in_progress"
-                                                                ? (styles as any).badgeProgress ?? styles.badgeOpen
-                                                                : styles.badgeClosed
+                                                        className={`${styles.badge} ${t.status === "open" ? styles.badgeOpen : styles.badgeClosed
                                                             }`}
                                                     >
                                                         {statusLabel(t.status)}
                                                     </span>
                                                 </td>
                                             </tr>
-                                        ))}
-
-                                    {!isLoading && !err && tickets.length === 0 && (
-                                        <tr>
-                                            <td className={styles.empty} colSpan={6}>
-                                                Обращений пока нет
-                                            </td>
-                                        </tr>
+                                        ))
                                     )}
                                 </tbody>
                             </table>
@@ -216,7 +260,7 @@ export function UserPage() {
                                 <div className={styles.cardTitle}>Последние действия</div>
                                 <div className={styles.activityList}>
                                     {mockActivity.map((a, idx) => (
-                                        <div key={idx} className={styles.activityItem}>
+                                        <div key={`${a.id}-${a.text}-${idx}`} className={styles.activityItem}>
                                             <button className={styles.activityLink} type="button">
                                                 {a.id}
                                             </button>
@@ -251,7 +295,7 @@ export function UserPage() {
                     </section>
 
                     <aside className={styles.right}>
-                        <button className={styles.createBtnSide} type="button">
+                        <button className={styles.createBtnSide} type="button" onClick={openCreate}>
                             Создать обращение
                         </button>
 
@@ -259,7 +303,7 @@ export function UserPage() {
                             <div className={styles.cardTitle}>Последние действия</div>
                             <div className={styles.activityList}>
                                 {mockActivity.map((a, idx) => (
-                                    <div key={idx} className={styles.activityItem}>
+                                    <div key={`${a.id}-${a.text}-${idx}`} className={styles.activityItem}>
                                         <button className={styles.activityLink} type="button">
                                             {a.id}
                                         </button>
@@ -293,6 +337,7 @@ export function UserPage() {
                     </aside>
                 </div>
             </main>
+            <CreateTicketModal open={isCreateOpen} onClose={closeCreate} onSubmit={handleCreate} />
         </div>
     );
 }

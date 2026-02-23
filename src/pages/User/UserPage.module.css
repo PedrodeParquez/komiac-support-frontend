@@ -87,7 +87,6 @@
     box-shadow: 0 0 0 3px rgba(90, 162, 255, 0.12);
 }
 
-/* ---------- layout ---------- */
 .content {
     padding: 0 40px 40px;
 }
@@ -107,7 +106,6 @@
     color: var(--text);
 }
 
-/* main grid for >1700 */
 .grid {
     display: grid;
     grid-template-columns: 1fr 480px;
@@ -120,7 +118,6 @@
     min-width: 0;
 }
 
-/* ---------- table card ---------- */
 .tableCard {
     background: #fff;
     border: 1px solid var(--border);
@@ -165,7 +162,6 @@
     padding: 0;
 }
 
-/* тема сокращается */
 .ellipsis {
     max-width: 360px;
     white-space: nowrap;
@@ -182,7 +178,6 @@
     color: #9aa6b2;
 }
 
-/* ---------- badges ---------- */
 .badge {
     display: inline-flex;
     align-items: center;
@@ -204,7 +199,6 @@
     color: var(--card);
 }
 
-/* ---------- buttons ---------- */
 .createBtnSide,
 .createBtnTop {
     height: 52px;
@@ -219,19 +213,15 @@
     box-shadow: 0 8px 24px rgba(18, 38, 63, 0.06);
 }
 
-/* side button is full width */
 .createBtnSide {
     width: 100%;
 }
 
-/* top button is auto width */
 .createBtnTop {
     padding: 0 22px;
     display: none;
-    /* показываем при <=1700 */
 }
 
-/* ---------- cards ---------- */
 .card {
     margin-top: 16px;
     background: #fff;
@@ -355,4 +345,12 @@
     .cardsUnderTable .card {
         margin-top: 0;
     }
+}
+
+.emptyCell {
+    text-align: center;
+    color: #9aa6b2;
+    padding: 80px 14px;
+    font-family: var(--font-text);
+    font-size: 18px;
 }
