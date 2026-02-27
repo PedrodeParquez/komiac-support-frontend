@@ -4,6 +4,7 @@ import styles from "./AdminPage.module.css";
 import Logo from "../../assets/images/logo.png";
 import ExitIcon from "../../assets/icons/exit-icon.svg?react";
 import SearchIcon from "../../assets/icons/search-icon.svg?react";
+import { refresh } from "../../api/auth";
 import { useAuth } from "../../auth/AuthContext";
 import { getAccessToken } from "../../auth/tokenStorage";
 
@@ -75,22 +76,10 @@ function statusBadgeClass(s: string) {
     return styles.badgeClosed;
 }
 
-function priorityLabel(p: string) {
-    if (p === "high") return "Высокий";
-    if (p === "medium") return "Средний";
-    return "Низкий";
-}
-
 function deptLabel(d: string | { name?: string } | null | undefined) {
     if (!d) return "—";
     if (typeof d === "string") return d.trim() ? d : "—";
     return d.name?.trim() ? d.name : "—";
-}
-
-function phoneLabel(p: unknown) {
-    if (typeof p !== "string") return "—";
-    const s = p.trim();
-    return s ? s : "—";
 }
 
 function normalizeTicketDetail(raw: any): TicketDetail {
@@ -126,8 +115,6 @@ function normalizeTicketListItem(raw: any): TicketListItem {
     const dept = raw?.dept ?? raw?.department ?? null;
     return { ...raw, dept } as TicketListItem;
 }
-
-import { refresh } from "../../api/auth";
 
 async function authedFetch(path: string, init?: RequestInit): Promise<Response> {
     const baseUrl = import.meta.env.VITE_API_URL as string;
@@ -280,12 +267,10 @@ export function AdminPage() {
 
     useEffect(() => {
         void loadSupportUsers();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     useEffect(() => {
         void loadTickets();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tab, query]);
 
     useEffect(() => {
@@ -296,7 +281,6 @@ export function AdminPage() {
             return;
         }
         void loadDetail(selectedId);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedId]);
 
     const saveReply = async () => {
@@ -346,9 +330,6 @@ export function AdminPage() {
         if (!selectedId) return;
         if (!canClose) return;
 
-        // eslint-disable-next-line no-restricted-globals
-        if (!confirm("Закрыть обращение?")) return;
-
         try {
             setClosing(true);
 
@@ -382,12 +363,10 @@ export function AdminPage() {
                     <img className={styles.logo} src={Logo} alt="Комиац" />
                     <div className={styles.subtitle}>Техническая поддержка</div>
                 </div>
-
                 <div className={styles.profile}>
                     <div className={styles.avatar} aria-hidden="true">
                         {avatarLetter}
                     </div>
-
                     <div className={styles.profileMeta}>
                         <div className={styles.profileRow}>
                             <div className={styles.profileName}>{user?.name ?? "—"}</div>
@@ -398,14 +377,15 @@ export function AdminPage() {
                     </div>
                 </div>
             </header>
-
             <main className={styles.content}>
                 <div className={styles.topRow}>
                     <div className={styles.topLeft}>
                         <h1 className={styles.h1}>Обращения</h1>
-
                         <div className={styles.tabsRow}>
-                            <nav className={styles.tabs} aria-label="Фильтр обращений">
+                            <nav className={styles.tabs}>
+                                <button className={`${styles.tab} ${tab === "all" ? styles.tabActive : ""}`} type="button" onClick={() => setTab("all")}>
+                                    Все
+                                </button>
                                 <button className={`${styles.tab} ${tab === "new" ? styles.tabActive : ""}`} type="button" onClick={() => setTab("new")}>
                                     Новые
                                 </button>
@@ -418,9 +398,6 @@ export function AdminPage() {
                                 </button>
                                 <button className={`${styles.tab} ${tab === "closed" ? styles.tabActive : ""}`} type="button" onClick={() => setTab("closed")}>
                                     Закрытые
-                                </button>
-                                <button className={`${styles.tab} ${tab === "all" ? styles.tabActive : ""}`} type="button" onClick={() => setTab("all")}>
-                                    Все
                                 </button>
                             </nav>
                             <div className={styles.search}>
@@ -447,22 +424,20 @@ export function AdminPage() {
                                         <th>Номер</th>
                                         <th>Тема</th>
                                         <th>Дата отправки</th>
-                                        <th>Приоритет</th>
                                         <th>Ответственный</th>
                                         <th>Статус</th>
                                     </tr>
                                 </thead>
-
                                 <tbody>
                                     {loadingList ? (
                                         <tr>
-                                            <td className={styles.muted} colSpan={6} style={{ padding: 14 }}>
+                                            <td className={styles.muted} colSpan={5} style={{ padding: 14 }}>
                                                 Загрузка...
                                             </td>
                                         </tr>
                                     ) : tickets.length === 0 ? (
                                         <tr>
-                                            <td className={styles.empty} colSpan={6}>
+                                            <td className={styles.empty} colSpan={5}>
                                                 Ничего не найдено
                                             </td>
                                         </tr>
@@ -494,7 +469,6 @@ export function AdminPage() {
                                                     {t.title}
                                                 </td>
                                                 <td className={styles.mono}>{t.createdAt}</td>
-                                                <td>{priorityLabel(t.priority)}</td>
                                                 <td className={t.assigneeName ? "" : styles.muted}>
                                                     {t.assigneeName ?? "Ещё не назначен"}
                                                 </td>
@@ -510,7 +484,6 @@ export function AdminPage() {
                             </table>
                         </div>
                     </section>
-
                     <aside className={styles.right}>
                         {!selected ? (
                             <div className={styles.emptyDetail}>Выберите обращение</div>
@@ -529,25 +502,21 @@ export function AdminPage() {
                                                 <div className={styles.detailLabel}>Тема:</div>
                                                 <div className={styles.detailValue}>{selected.topic ?? selected.title ?? "—"}</div>
                                             </div>
+                                            <textarea className={styles.textarea} value={selected.message ?? ""} readOnly />
                                             <div className={styles.detailRow}>
-                                                <div className={styles.detailLabel}>От кого:</div>
-                                                <div className={styles.detailValue}>{selected.fromName ?? "—"}</div>
-                                            </div>
-                                            <div className={styles.detailRow}>
-                                                <div className={styles.detailLabel}>Отдел:</div>
-                                                <div className={styles.detailValue}>{deptLabel(selected.dept)}</div>
-                                            </div>
-                                            <div className={styles.detailRow}>
-                                                <div className={styles.detailLabel}>Телефон:</div>
-                                                <div className={styles.detailValue}>{phoneLabel(selected.phone)}</div>
-                                            </div>
-                                            <div className={styles.detailRowCol}>
-                                                <div className={styles.detailLabel}>Сообщение</div>
-                                                <textarea className={styles.textarea} value={selected.message ?? ""} rows={3} readOnly />
+                                                <div className={styles.detailLabel}>От</div>
+                                                <div className={styles.detailValue}>
+                                                    <span className={styles.fromName}>{selected.fromName ?? "—"}</span>
+                                                    {deptLabel(selected.dept) !== "—" && (
+                                                        <>
+                                                            <span className={styles.fromSep}> из отдела </span>
+                                                            <span className={styles.fromDept}>{deptLabel(selected.dept)}</span>
+                                                        </>
+                                                    )}
+                                                </div>
                                             </div>
                                             <div className={styles.detailRowCol}>
                                                 <div className={styles.detailLabel}>Ответственный</div>
-
                                                 <select
                                                     className={styles.select}
                                                     value={assigneeId}
@@ -575,7 +544,6 @@ export function AdminPage() {
                                                 <textarea
                                                     className={styles.textarea}
                                                     placeholder="Напишите ответ пользователю"
-                                                    rows={3}
                                                     value={replyText}
                                                     onChange={(e) => setReplyText(e.target.value)}
                                                     readOnly={hasReply || isClosed}

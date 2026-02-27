@@ -3,11 +3,10 @@ import { getAccessToken, setAccessToken, clearTokens, isRememberMode } from "../
 
 export const http = axios.create({
     baseURL: import.meta.env.VITE_API_URL,
-    withCredentials: true, // важно для cookie refresh_token
+    withCredentials: true,
 });
 
 function isAuthEndpoint(url: string): boolean {
-    // url может быть относительный "/auth/me" или полный
     return (
         url.includes("/auth/login") ||
         url.includes("/auth/refresh") ||

@@ -6,7 +6,6 @@ import { useNavigate } from "react-router-dom";
 import ExitIcon from "../../assets/icons/exit-icon.svg?react";
 import MailIcon from "../../assets/icons/mail-icon.svg?react";
 import QuestionIcon from "../../assets/icons/question-icon.svg?react";
-import { CreateTicketModal, type CreateTicketPayload } from "../../components/CreateTicketModal/CreateTicketModal";
 import { getAccessToken } from "../../auth/tokenStorage";
 import { refresh } from "../../api/auth";
 
@@ -15,9 +14,23 @@ type TicketListItem = {
     ticketNumber: string;
     title: string;
     createdAt: string;
-    priority: string;
+    priority?: string;
     status: string;
     assigneeName?: string;
+};
+
+type TicketDetail = {
+    id: number;
+    ticketNumber: string;
+    title: string;
+    createdAt: string;
+    status: string;
+    assigneeName?: string;
+
+    topic?: string;
+    message?: string;
+    supportReply?: string | null;
+    repliedAt?: string | null;
 };
 
 type Activity = { id: string; text: string; when: string };
@@ -36,21 +49,33 @@ function statusLabel(s: string) {
     return "Закрыто";
 }
 
-function priorityLabel(p: string) {
-    if (p === "high") return "Высокий";
-    if (p === "medium") return "Средний";
-    return "Низкий";
+function statusBadgeClass(s: string) {
+    if (s === "open") return styles.badgeOpen;
+    if (s === "in_progress") return styles.badgeProgress;
+    return styles.badgeClosed;
+}
+
+function normalizeTicketDetail(raw: any): TicketDetail {
+    return {
+        id: raw?.id,
+        ticketNumber: raw?.ticketNumber ?? raw?.ticket_number ?? "—",
+        title: raw?.title ?? "—",
+        createdAt: raw?.createdAt ?? raw?.created_at ?? "—",
+        status: raw?.status ?? "open",
+        assigneeName: raw?.assigneeName ?? raw?.assignee_name,
+
+        topic: raw?.topic ?? raw?.title,
+        message: raw?.message ?? raw?.description ?? "",
+        supportReply: raw?.supportReply ?? raw?.support_reply ?? null,
+        repliedAt: raw?.repliedAt ?? raw?.replied_at ?? null,
+    };
 }
 
 async function authedFetch(path: string, init?: RequestInit): Promise<Response> {
     const baseUrl = import.meta.env.VITE_API_URL as string;
-    if (!baseUrl) {
-        throw new Error("VITE_API_URL is empty. Set it in .env like http://localhost:8080");
-    }
 
     const doFetch = (token: string | null) => {
         const headers = new Headers(init?.headers);
-
         if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
         if (token) headers.set("Authorization", `Bearer ${token}`);
 
@@ -66,7 +91,6 @@ async function authedFetch(path: string, init?: RequestInit): Promise<Response> 
 
     try {
         await refresh();
-
         const token2 = getAccessToken();
         res = await doFetch(token2);
         return res;
@@ -79,12 +103,16 @@ export function UserPage() {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
 
-    const [isCreateOpen, setIsCreateOpen] = useState(false);
     const [tickets, setTickets] = useState<TicketListItem[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [loadingList, setLoadingList] = useState(true);
 
-    const openCreate = () => setIsCreateOpen(true);
-    const closeCreate = () => setIsCreateOpen(false);
+    const [selectedId, setSelectedId] = useState<number | null>(null);
+    const [selected, setSelected] = useState<TicketDetail | null>(null);
+    const [loadingDetail, setLoadingDetail] = useState(false);
+
+    const [title, setTitle] = useState("");
+    const [description, setDescription] = useState("");
+    const [creating, setCreating] = useState(false);
 
     const avatarLetter = useMemo(() => {
         const n = user?.name?.trim();
@@ -98,7 +126,7 @@ export function UserPage() {
 
     const loadMyTickets = async () => {
         try {
-            setLoading(true);
+            setLoadingList(true);
 
             const res = await authedFetch("/tickets/my", { method: "GET" });
 
@@ -120,31 +148,84 @@ export function UserPage() {
             const sorted = [...list].sort((a, b) => b.id - a.id);
 
             setTickets(sorted);
+
+            if (!selectedId && sorted[0]?.id) setSelectedId(sorted[0].id);
+            if (selectedId && !sorted.some((t) => t.id === selectedId)) setSelectedId(sorted[0]?.id ?? null);
         } catch (e) {
             console.error(e);
             alert("Ошибка сети при загрузке обращений (см. console).");
         } finally {
-            setLoading(false);
+            setLoadingList(false);
+        }
+    };
+
+    const loadDetail = async (id: number) => {
+        try {
+            setLoadingDetail(true);
+
+            const res = await authedFetch(`/tickets/my/${id}`, { method: "GET" });
+
+            if (res.status === 401) {
+                alert("Сессия истекла. Пожалуйста, войдите снова.");
+                await onLogout();
+                return;
+            }
+
+            if (!res.ok) {
+                const text = await res.text();
+                console.error("GET /tickets/:id failed:", res.status, text);
+                alert(`Ошибка загрузки обращения: ${res.status}`);
+                return;
+            }
+
+            const data = (await res.json()) as { ticket: any };
+            setSelected(normalizeTicketDetail(data.ticket));
+        } catch (e) {
+            console.error(e);
+            alert("Ошибка сети при загрузке обращения (см. console).");
+        } finally {
+            setLoadingDetail(false);
         }
     };
 
     useEffect(() => {
         void loadMyTickets();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const handleCreate = async (payload: CreateTicketPayload) => {
+    useEffect(() => {
+        if (!selectedId) {
+            setSelected(null);
+            return;
+        }
+        void loadDetail(selectedId);
+    }, [selectedId]);
+
+    const submitCreate = async () => {
+        const t = title.trim();
+        const d = description.trim();
+
+        if (!t) {
+            alert("Введите тему обращения");
+            return;
+        }
+        if (!d) {
+            alert("Введите описание");
+            return;
+        }
+
         try {
-            const body = {
-                title: payload.title.trim(),
-                description: payload.description.trim(),
-                priority: payload.priority,
-            };
+            setCreating(true);
 
             const res = await authedFetch("/tickets", {
                 method: "POST",
-                body: JSON.stringify(body),
+                body: JSON.stringify({ title: t, description: d }),
             });
+
+            if (res.status === 401) {
+                alert("Сессия истекла. Пожалуйста, войдите снова.");
+                await onLogout();
+                return;
+            }
 
             if (!res.ok) {
                 const text = await res.text();
@@ -153,14 +234,15 @@ export function UserPage() {
                 return;
             }
 
-            const data = (await res.json()) as { ticket: any };
-            console.log("Created ticket:", data.ticket);
-
-            closeCreate();
+            setTitle("");
+            setDescription("");
 
             await loadMyTickets();
         } catch (e) {
-
+            console.error(e);
+            alert("Ошибка сети при создании обращения (см. console).");
+        } finally {
+            setCreating(false);
         }
     };
 
@@ -171,12 +253,10 @@ export function UserPage() {
                     <img className={styles.logo} src={Logo} alt="Комиац" />
                     <div className={styles.subtitle}>Техническая поддержка</div>
                 </div>
-
                 <div className={styles.profile}>
                     <div className={styles.avatar} aria-hidden="true">
                         {avatarLetter}
                     </div>
-
                     <div className={styles.profileMeta}>
                         <div className={styles.profileRow}>
                             <div className={styles.profileName}>{user?.name ?? "—"}</div>
@@ -187,75 +267,10 @@ export function UserPage() {
                     </div>
                 </div>
             </header>
-
             <main className={styles.content}>
-                <div className={styles.topRow}>
-                    <h1 className={styles.h1}>Мои обращения</h1>
-                    <button className={styles.createBtnTop} type="button" onClick={openCreate}>
-                        Создать обращение
-                    </button>
-                </div>
-
                 <div className={styles.grid}>
                     <section className={styles.left}>
-                        <div className={styles.tableCard}>
-                            <table className={styles.table}>
-                                <thead>
-                                    <tr>
-                                        <th>Номер</th>
-                                        <th>Тема</th>
-                                        <th>Дата отправки</th>
-                                        <th>Приоритет</th>
-                                        <th>Ответственный</th>
-                                        <th>Статус</th>
-                                    </tr>
-                                </thead>
-
-                                <tbody>
-                                    {loading ? (
-                                        <tr>
-                                            <td colSpan={6} className={styles.muted} style={{ padding: 14 }}>
-                                                Загрузка...
-                                            </td>
-                                        </tr>
-                                    ) : tickets.length === 0 ? (
-                                        <tr>
-                                            <td colSpan={6} className={styles.emptyCell}>
-                                                Пока нет обращений
-                                            </td>
-                                        </tr>
-                                    ) : (
-                                        tickets.map((t) => (
-                                            <tr key={t.id} className={styles.row}>
-                                                <td>
-                                                    <button className={styles.link} type="button">
-                                                        {t.ticketNumber}
-                                                    </button>
-                                                </td>
-                                                <td className={styles.ellipsis} title={t.title}>
-                                                    {t.title}
-                                                </td>
-                                                <td className={styles.mono}>{t.createdAt}</td>
-                                                <td>{priorityLabel(t.priority)}</td>
-                                                <td className={t.assigneeName ? "" : styles.muted}>
-                                                    {t.assigneeName ?? "Ещё не назначен"}
-                                                </td>
-                                                <td>
-                                                    <span
-                                                        className={`${styles.badge} ${t.status === "open" ? styles.badgeOpen : styles.badgeClosed
-                                                            }`}
-                                                    >
-                                                        {statusLabel(t.status)}
-                                                    </span>
-                                                </td>
-                                            </tr>
-                                        ))
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-
-                        <div className={styles.cardsUnderTable} aria-hidden="true">
+                        <div className={styles.aboveTable}>
                             <div className={styles.card}>
                                 <div className={styles.cardTitle}>Последние действия</div>
                                 <div className={styles.activityList}>
@@ -272,61 +287,108 @@ export function UserPage() {
                                     ))}
                                 </div>
                             </div>
-
                             <div className={styles.card}>
-                                <div className={styles.cardTitle}>Нужна помощь?</div>
-                                <div className={styles.helpList}>
-                                    <button className={styles.helpItem} type="button">
-                                        <span className={styles.helpIcon} aria-hidden="true">
-                                            <QuestionIcon width={18} height={18} />
-                                        </span>
-                                        <span className={styles.helpText}>Часто задаваемые вопросы</span>
-                                    </button>
-
-                                    <button className={styles.helpItem} type="button">
-                                        <span className={styles.helpIcon} aria-hidden="true">
-                                            <MailIcon width={18} height={18} />
-                                        </span>
-                                        <span className={styles.helpText}>Напишите нам</span>
+                                <div className={styles.cardTitle}>Создать обращение</div>
+                                <div className={styles.formGrid}>
+                                    <div className={styles.formRow}>
+                                        <div className={styles.formLabelInline}>Тема</div>
+                                        <input
+                                            className={styles.input}
+                                            placeholder="Например: Нужно поменять пароль"
+                                            value={title}
+                                            onChange={(e) => setTitle(e.target.value)}
+                                        />
+                                    </div>
+                                    <div className={styles.formRowCol}>
+                                        <div className={styles.formLabel}>Описание</div>
+                                        <textarea
+                                            className={styles.textarea}
+                                            placeholder="Опишите проблему"
+                                            value={description}
+                                            onChange={(e) => setDescription(e.target.value)}
+                                        />
+                                    </div>
+                                    <button className={styles.primaryBtn} type="button" onClick={submitCreate} disabled={creating}>
+                                        {creating ? "Создание..." : "Отправить обращение"}
                                     </button>
                                 </div>
                             </div>
                         </div>
-                    </section>
-
-                    <aside className={styles.right}>
-                        <button className={styles.createBtnSide} type="button" onClick={openCreate}>
-                            Создать обращение
-                        </button>
-
-                        <div className={styles.card}>
-                            <div className={styles.cardTitle}>Последние действия</div>
-                            <div className={styles.activityList}>
-                                {mockActivity.map((a, idx) => (
-                                    <div key={`${a.id}-${a.text}-${idx}`} className={styles.activityItem}>
-                                        <button className={styles.activityLink} type="button">
-                                            {a.id}
-                                        </button>
-                                        <div>
-                                            <span className={styles.activityText}>{a.text}</span>
-                                            <span className={styles.activityWhen}>{a.when}</span>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
+                        <h1 className={styles.h1}>Мои обращения</h1>
+                        <div className={styles.tableCard}>
+                            <table className={styles.table}>
+                                <thead>
+                                    <tr>
+                                        <th>Номер</th>
+                                        <th>Тема</th>
+                                        <th>Дата отправки</th>
+                                        <th>Ответственный</th>
+                                        <th>Статус</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {loadingList ? (
+                                        <tr>
+                                            <td colSpan={5} className={styles.muted} style={{ padding: 14 }}>
+                                                Загрузка...
+                                            </td>
+                                        </tr>
+                                    ) : tickets.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={5} className={styles.emptyCell}>
+                                                Пока нет обращений
+                                            </td>
+                                        </tr>
+                                    ) : (
+                                        tickets.map((t) => (
+                                            <tr
+                                                key={t.id}
+                                                className={`${styles.row} ${t.id === selectedId ? styles.rowActive : ""}`}
+                                                onClick={() => setSelectedId(t.id)}
+                                                role="button"
+                                                tabIndex={0}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === "Enter" || e.key === " ") setSelectedId(t.id);
+                                                }}
+                                            >
+                                                <td>
+                                                    <button
+                                                        className={styles.link}
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setSelectedId(t.id);
+                                                        }}
+                                                    >
+                                                        {t.ticketNumber}
+                                                    </button>
+                                                </td>
+                                                <td className={styles.ellipsis} title={t.title}>
+                                                    {t.title}
+                                                </td>
+                                                <td className={styles.mono}>{t.createdAt}</td>
+                                                <td className={t.assigneeName ? "" : styles.muted}>{t.assigneeName ?? "Ещё не назначен"}</td>
+                                                <td>
+                                                    <span className={`${styles.badge} ${statusBadgeClass(t.status)}`}>{statusLabel(t.status)}</span>
+                                                </td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
                         </div>
-
-                        <div className={styles.card}>
-                            <div className={styles.cardTitle}>Нужна помощь?</div>
-                            <div className={styles.helpList}>
-                                <button className={styles.helpItem} type="button">
+                        <div className={styles.helpWideCard}>
+                            <div className={styles.cardTitle} style={{ marginBottom: 2 }}>
+                                Нужна помощь?
+                            </div>
+                            <div className={styles.helpWideRow}>
+                                <button className={styles.helpWideItem} type="button">
                                     <span className={styles.helpIcon} aria-hidden="true">
                                         <QuestionIcon width={18} height={18} />
                                     </span>
                                     <span className={styles.helpText}>Часто задаваемые вопросы</span>
                                 </button>
-
-                                <button className={styles.helpItem} type="button">
+                                <button className={styles.helpWideItem} type="button">
                                     <span className={styles.helpIcon} aria-hidden="true">
                                         <MailIcon width={18} height={18} />
                                     </span>
@@ -334,10 +396,49 @@ export function UserPage() {
                                 </button>
                             </div>
                         </div>
+                    </section>
+                    <aside className={styles.right}>
+                        {!selected ? (
+                            <div className={styles.emptyDetail}>Выберите обращение</div>
+                        ) : (
+                            <div className={styles.detailCard}>
+                                <div className={styles.detailHead}>
+                                    <div className={styles.detailTitle}>{`Обращение ${selected.ticketNumber}`}</div>
+                                    <div className={styles.detailDate}>{`от ${selected.createdAt}`}</div>
+                                </div>
+                                <div className={styles.detailGrid}>
+                                    {loadingDetail ? (
+                                        <div className={styles.muted}>Загрузка...</div>
+                                    ) : (
+                                        <>
+                                            <div className={styles.detailRow}>
+                                                <div className={styles.detailLabel}>Тема:</div>
+                                                <div className={styles.detailValue}>{selected.topic ?? selected.title ?? "—"}</div>
+                                            </div>
+                                            <div className={styles.detailRow}>
+                                                <div className={styles.detailLabel}>Ответственный:</div>
+                                                <div className={styles.detailValue}>{selected.assigneeName ?? "Ещё не назначен"}</div>
+                                            </div>
+                                            <div className={styles.detailRowCol}>
+                                                <div className={styles.detailLabel}>Сообщение</div>
+                                                <textarea className={styles.textarea} value={selected.message ?? ""} readOnly />
+                                            </div>
+                                            <div className={styles.detailRowCol}>
+                                                <div className={styles.detailLabel}>Ответ поддержки</div>
+                                                <textarea
+                                                    className={styles.textarea}
+                                                    value={selected.supportReply?.trim() ? selected.supportReply : "Ответа пока нет"}
+                                                    readOnly
+                                                />
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        )}
                     </aside>
                 </div>
             </main>
-            <CreateTicketModal open={isCreateOpen} onClose={closeCreate} onSubmit={handleCreate} />
         </div>
     );
 }

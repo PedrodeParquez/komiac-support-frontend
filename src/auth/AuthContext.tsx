@@ -23,7 +23,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             try {
                 const token = getAccessToken();
 
-                // если токена нет — не дергаем /auth/me и не ловим 401 на /login
                 if (!token) {
                     setUser(null);
                     return;

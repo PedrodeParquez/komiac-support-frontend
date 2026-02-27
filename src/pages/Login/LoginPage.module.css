@@ -10,12 +10,12 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 24px;
+    gap: 18px;
 }
 
 .brand {
     text-align: center;
-    line-height: 1.1;
+    line-height: 1;
 }
 
 .subtitle {
@@ -26,12 +26,12 @@
 }
 
 .card {
-    width: min(420px, 92vw);
+    width: min(400px, 92vw);
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     box-shadow: 0 8px 24px rgba(18, 38, 63, 0.08);
-    padding: 32px;
+    padding: 28px 32px;
 }
 
 .title {
@@ -45,7 +45,7 @@
 .form {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 18px;
 }
 
 .label {
@@ -59,7 +59,7 @@
 }
 
 .input {
-    height: 45px;
+    height: 42px;
     border-radius: 10px;
     font-size: 18px;
     border: 1px solid #cfd8e6;
@@ -75,7 +75,7 @@
 
 .remember {
     position: relative;
-    margin-top: -4px;
+    margin-top: -8px;
     display: inline-flex;
     align-items: center;
     gap: 10px;
@@ -132,8 +132,8 @@
 }
 
 .submit {
-    margin-top: 6px;
-    height: 52px;
+    margin-top: 12px;
+    height: 48px;
     border: none;
     border-radius: 8px;
     background: var(--primary);
@@ -152,7 +152,7 @@
     border: none;
     background: transparent;
     color: var(--primary);
-    margin-top: -8px;
+    margin-top: -10px;
     cursor: pointer;
     text-align: left;
     padding: 0;

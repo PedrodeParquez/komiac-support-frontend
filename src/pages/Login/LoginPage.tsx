@@ -83,13 +83,10 @@ export function LoginPage() {
                             />
                             <span className={styles.checkboxBox} aria-hidden="true" />
                         </label>
-
                         {serverError && <div className={styles.serverError}>{serverError}</div>}
-
                         <button className={styles.submit} type="submit" disabled={isSubmitting}>
                             {isSubmitting ? "Вход..." : "Войти"}
                         </button>
-
                         <button className={styles.forgot} type="button">
                             Забыли свой пароль?
                         </button>
