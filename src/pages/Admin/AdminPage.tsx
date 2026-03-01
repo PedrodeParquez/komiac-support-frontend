@@ -4,65 +4,10 @@ import styles from "./AdminPage.module.css";
 import Logo from "../../assets/images/logo.png";
 import ExitIcon from "../../assets/icons/exit-icon.svg?react";
 import SearchIcon from "../../assets/icons/search-icon.svg?react";
-import { refresh } from "../../api/auth";
 import { useAuth } from "../../auth/AuthContext";
-import { getAccessToken } from "../../auth/tokenStorage";
-
-type TabKey = "new" | "in_progress" | "closed" | "all";
-
-type Department = {
-    id: number;
-    name: string;
-};
-
-type TicketListItem = {
-    id: number;
-    ticketNumber: string;
-    title: string;
-    createdAt: string;
-    priority: string;
-    status: string;
-    assigneeName?: string;
-    dept?: string | Department | null;
-};
-
-type TicketDetail = {
-    id: number;
-    ticketNumber: string;
-    title: string;
-    createdAt: string;
-    priority: string;
-    status: string;
-    assigneeId?: number;
-    assigneeName?: string;
-
-    topic: string;
-
-    fromName?: string;
-    fromUser?: {
-        name?: string;
-        phone?: string | null;
-        department?: string | Department | null;
-        dept?: string | Department | null;
-    };
-    user?: {
-        name?: string;
-        phone?: string | null;
-        department?: string | Department | null;
-        dept?: string | Department | null;
-    };
-
-    dept?: string | Department | null;
-    department?: string | Department | null;
-    phone?: string | null;
-    phoneNumber?: string | null;
-
-    message: string;
-    supportReply?: string;
-    repliedAt?: string;
-};
-
-type SupportUser = { id: number; name: string };
+import { type SupportUser, listSupportUsers } from "../../api/users";
+import type { TicketDetail, TicketListItem, AdminTabKey } from "../../api/tickets";
+import { closeTicketAdmin, getTicketAdmin, listTicketsAdmin, replyTicketAdmin } from "../../api/tickets";
 
 function statusLabel(s: string) {
     if (s === "open") return "Открыто";
@@ -82,76 +27,19 @@ function deptLabel(d: string | { name?: string } | null | undefined) {
     return d.name?.trim() ? d.name : "—";
 }
 
-function normalizeTicketDetail(raw: any): TicketDetail {
-    const dept =
-        raw?.dept ??
-        raw?.department ??
-        raw?.fromUser?.department ??
-        raw?.fromUser?.dept ??
-        raw?.user?.department ??
-        raw?.user?.dept ??
-        null;
-
-    const phone =
-        raw?.phone ??
-        raw?.phoneNumber ??
-        raw?.fromUser?.phone ??
-        raw?.fromUser?.phoneNumber ??
-        raw?.user?.phone ??
-        raw?.user?.phoneNumber ??
-        null;
-
-    const fromName = raw?.fromName ?? raw?.from_user_name ?? raw?.fromUser?.name ?? raw?.user?.name ?? "—";
-
-    return {
-        ...raw,
-        dept,
-        phone,
-        fromName,
-    } as TicketDetail;
-}
-
-function normalizeTicketListItem(raw: any): TicketListItem {
-    const dept = raw?.dept ?? raw?.department ?? null;
-    return { ...raw, dept } as TicketListItem;
-}
-
-async function authedFetch(path: string, init?: RequestInit): Promise<Response> {
-    const baseUrl = import.meta.env.VITE_API_URL as string;
-    if (!baseUrl) throw new Error("VITE_API_URL is empty. Set .env like http://localhost:8080");
-
-    const doFetch = (token: string | null) => {
-        const headers = new Headers(init?.headers);
-        if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-        if (token) headers.set("Authorization", `Bearer ${token}`);
-        return fetch(`${baseUrl}${path}`, { ...init, headers });
-    };
-
-    const t1 = getAccessToken();
-    let res = await doFetch(t1);
-    if (res.status !== 401) return res;
-
-    try {
-        await refresh();
-        const t2 = getAccessToken();
-        res = await doFetch(t2);
-        return res;
-    } catch {
-        return res;
-    }
-}
-
 export function AdminPage() {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
 
-    const [tab, setTab] = useState<TabKey>("new");
+    const [tab, setTab] = useState<AdminTabKey>("new");
     const [query, setQuery] = useState("");
     const [tickets, setTickets] = useState<TicketListItem[]>([]);
     const [loadingList, setLoadingList] = useState(true);
+
     const [selectedId, setSelectedId] = useState<number | null>(null);
     const [selected, setSelected] = useState<TicketDetail | null>(null);
     const [loadingDetail, setLoadingDetail] = useState(false);
+
     const [supportUsers, setSupportUsers] = useState<SupportUser[]>([]);
     const [assigneeId, setAssigneeId] = useState<number | "">("");
     const [replyText, setReplyText] = useState("");
@@ -168,55 +56,25 @@ export function AdminPage() {
         navigate("/login", { replace: true });
     };
 
-    const isClosed = selected?.status === "closed" || selected?.status === "resolved";
+    const isClosed = selected?.status === "closed";
     const hasReply = !!selected?.supportReply?.trim();
     const canClose = selected?.status === "in_progress";
 
-    const loadSupportUsers = async () => {
-        const res = await authedFetch("/users/support", { method: "GET" });
-        if (res.status === 401) {
-            alert("Сессия истекла. Пожалуйста, войдите снова.");
-            await onLogout();
-            return;
+    const loadSupport = async () => {
+        try {
+            const list = await listSupportUsers();
+            setSupportUsers(list);
+        } catch (e) {
+            console.error(e);
         }
-        if (!res.ok) {
-            const t = await res.text();
-            console.error("GET /users/support:", res.status, t);
-            return;
-        }
-        const data = (await res.json()) as { users: SupportUser[] };
-        setSupportUsers(Array.isArray(data.users) ? data.users : []);
     };
 
     const loadTickets = async () => {
         try {
             setLoadingList(true);
 
-            const qs = new URLSearchParams();
-            qs.set("tab", tab);
-            if (query.trim()) qs.set("q", query.trim());
-
-            const res = await authedFetch(`/tickets?${qs.toString()}`, { method: "GET" });
-
-            if (res.status === 401) {
-                alert("Сессия истекла. Пожалуйста, войдите снова.");
-                await onLogout();
-                return;
-            }
-            if (res.status === 403) {
-                alert("Недостаточно прав. Эта страница для роли support.");
-                return;
-            }
-            if (!res.ok) {
-                const text = await res.text();
-                console.error("GET /tickets failed:", res.status, text);
-                alert(`Ошибка загрузки обращений: ${res.status}`);
-                return;
-            }
-
-            const data = (await res.json()) as { tickets: any[] };
-            const listRaw = Array.isArray(data.tickets) ? data.tickets : [];
-            const list = listRaw.map(normalizeTicketListItem);
+            const q = query.trim() ? query.trim() : undefined;
+            const list = await listTicketsAdmin({ tab, q });
 
             setTickets(list);
 
@@ -224,6 +82,7 @@ export function AdminPage() {
             if (selectedId && !list.some((t) => t.id === selectedId)) setSelectedId(list[0]?.id ?? null);
         } catch (e) {
             console.error(e);
+
             alert("Ошибка сети при загрузке списка (см. console).");
         } finally {
             setLoadingList(false);
@@ -234,39 +93,20 @@ export function AdminPage() {
         try {
             setLoadingDetail(true);
 
-            const res = await authedFetch(`/tickets/${id}`, { method: "GET" });
-            if (res.status === 401) {
-                alert("Сессия истекла. Пожалуйста, войдите снова.");
-                await onLogout();
-                return;
-            }
-            if (res.status === 403) {
-                alert("Недостаточно прав. Эта страница для роли support.");
-                return;
-            }
-            if (!res.ok) {
-                const text = await res.text();
-                console.error("GET /tickets/:id failed:", res.status, text);
-                alert(`Ошибка загрузки тикета: ${res.status}`);
-                return;
-            }
+            const t = await getTicketAdmin(id);
 
-            const data = (await res.json()) as { ticket: any };
-            const normalized = normalizeTicketDetail(data.ticket);
-
-            setSelected(normalized);
-            setAssigneeId(normalized.assigneeId ?? "");
-            setReplyText(normalized.supportReply ?? "");
+            setSelected(t);
+            setAssigneeId(t.assigneeId ?? "");
+            setReplyText(t.supportReply ?? "");
         } catch (e) {
             console.error(e);
-            alert("Ошибка сети при загрузке тикета (см. console).");
         } finally {
             setLoadingDetail(false);
         }
     };
 
     useEffect(() => {
-        void loadSupportUsers();
+        void loadSupport();
     }, []);
 
     useEffect(() => {
@@ -287,40 +127,16 @@ export function AdminPage() {
         if (!selectedId || !selected) return;
 
         const reply = replyText.trim();
-        if (!reply) {
-            alert("Введите ответ");
-            return;
-        }
-        if (assigneeId === "") {
-            alert("Выберите ответственного");
-            return;
-        }
 
         try {
             setSavingReply(true);
 
-            const res = await authedFetch(`/tickets/${selectedId}/reply`, {
-                method: "POST",
-                body: JSON.stringify({ assigneeId, reply }),
-            });
-
-            if (res.status === 401) {
-                alert("Сессия истекла. Пожалуйста, войдите снова.");
-                await onLogout();
-                return;
-            }
-            if (!res.ok) {
-                const t = await res.text();
-                console.error("reply failed:", res.status, t);
-                alert(`Ошибка сохранения ответа: ${res.status}`);
-                return;
-            }
+            await replyTicketAdmin({ id: selectedId, assigneeId, reply });
 
             await loadDetail(selectedId);
             await loadTickets();
         } catch (e) {
             console.error(e);
-            alert("Ошибка сети при сохранении (см. console).");
         } finally {
             setSavingReply(false);
         }
@@ -333,24 +149,12 @@ export function AdminPage() {
         try {
             setClosing(true);
 
-            const res = await authedFetch(`/tickets/${selectedId}/close`, { method: "POST" });
-            if (res.status === 401) {
-                alert("Сессия истекла. Пожалуйста, войдите снова.");
-                await onLogout();
-                return;
-            }
-            if (!res.ok) {
-                const t = await res.text();
-                console.error("close failed:", res.status, t);
-                alert(`Ошибка закрытия: ${res.status}`);
-                return;
-            }
+            await closeTicketAdmin(selectedId);
 
             await loadDetail(selectedId);
             await loadTickets();
         } catch (e) {
             console.error(e);
-            alert("Ошибка сети при закрытии (см. console).");
         } finally {
             setClosing(false);
         }
@@ -383,10 +187,18 @@ export function AdminPage() {
                         <h1 className={styles.h1}>Обращения</h1>
                         <div className={styles.tabsRow}>
                             <nav className={styles.tabs}>
-                                <button className={`${styles.tab} ${tab === "all" ? styles.tabActive : ""}`} type="button" onClick={() => setTab("all")}>
+                                <button
+                                    className={`${styles.tab} ${tab === "all" ? styles.tabActive : ""}`}
+                                    type="button"
+                                    onClick={() => setTab("all")}
+                                >
                                     Все
                                 </button>
-                                <button className={`${styles.tab} ${tab === "new" ? styles.tabActive : ""}`} type="button" onClick={() => setTab("new")}>
+                                <button
+                                    className={`${styles.tab} ${tab === "new" ? styles.tabActive : ""}`}
+                                    type="button"
+                                    onClick={() => setTab("new")}
+                                >
                                     Новые
                                 </button>
                                 <button
@@ -396,7 +208,11 @@ export function AdminPage() {
                                 >
                                     В работе
                                 </button>
-                                <button className={`${styles.tab} ${tab === "closed" ? styles.tabActive : ""}`} type="button" onClick={() => setTab("closed")}>
+                                <button
+                                    className={`${styles.tab} ${tab === "closed" ? styles.tabActive : ""}`}
+                                    type="button"
+                                    onClick={() => setTab("closed")}
+                                >
                                     Закрытые
                                 </button>
                             </nav>
@@ -469,13 +285,9 @@ export function AdminPage() {
                                                     {t.title}
                                                 </td>
                                                 <td className={styles.mono}>{t.createdAt}</td>
-                                                <td className={t.assigneeName ? "" : styles.muted}>
-                                                    {t.assigneeName ?? "Ещё не назначен"}
-                                                </td>
+                                                <td className={t.assigneeName ? "" : styles.muted}>{t.assigneeName ?? "Ещё не назначен"}</td>
                                                 <td>
-                                                    <span className={`${styles.badge} ${statusBadgeClass(t.status)}`}>
-                                                        {statusLabel(t.status)}
-                                                    </span>
+                                                    <span className={`${styles.badge} ${statusBadgeClass(t.status)}`}>{statusLabel(t.status)}</span>
                                                 </td>
                                             </tr>
                                         ))

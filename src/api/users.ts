@@ -1,4 +1,8 @@
+import { http } from "./http";
+
 export type UserRole = "user" | "support";
+
+export type SupportUser = { id: number; name: string };
 
 export type User = {
     id: number;
@@ -21,3 +25,8 @@ export type LoginResponse = {
 export type MeResponse = {
     user: User;
 };
+
+export async function listSupportUsers() {
+    const { data } = await http.get<{ users: SupportUser[] }>("/users/support");
+    return Array.isArray(data.users) ? data.users : [];
+}

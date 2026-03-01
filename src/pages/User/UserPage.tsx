@@ -6,32 +6,7 @@ import { useNavigate } from "react-router-dom";
 import ExitIcon from "../../assets/icons/exit-icon.svg?react";
 import MailIcon from "../../assets/icons/mail-icon.svg?react";
 import QuestionIcon from "../../assets/icons/question-icon.svg?react";
-import { getAccessToken } from "../../auth/tokenStorage";
-import { refresh } from "../../api/auth";
-
-type TicketListItem = {
-    id: number;
-    ticketNumber: string;
-    title: string;
-    createdAt: string;
-    priority?: string;
-    status: string;
-    assigneeName?: string;
-};
-
-type TicketDetail = {
-    id: number;
-    ticketNumber: string;
-    title: string;
-    createdAt: string;
-    status: string;
-    assigneeName?: string;
-
-    topic?: string;
-    message?: string;
-    supportReply?: string | null;
-    repliedAt?: string | null;
-};
+import { createMyTicket, getMyTicket, listMyTickets, type TicketListItem, type TicketDetail } from "../../api/tickets";
 
 type Activity = { id: string; text: string; when: string };
 
@@ -45,7 +20,6 @@ const mockActivity: Activity[] = [
 function statusLabel(s: string) {
     if (s === "open") return "Открыто";
     if (s === "in_progress") return "В работе";
-    if (s === "resolved") return "Решено";
     return "Закрыто";
 }
 
@@ -53,50 +27,6 @@ function statusBadgeClass(s: string) {
     if (s === "open") return styles.badgeOpen;
     if (s === "in_progress") return styles.badgeProgress;
     return styles.badgeClosed;
-}
-
-function normalizeTicketDetail(raw: any): TicketDetail {
-    return {
-        id: raw?.id,
-        ticketNumber: raw?.ticketNumber ?? raw?.ticket_number ?? "—",
-        title: raw?.title ?? "—",
-        createdAt: raw?.createdAt ?? raw?.created_at ?? "—",
-        status: raw?.status ?? "open",
-        assigneeName: raw?.assigneeName ?? raw?.assignee_name,
-
-        topic: raw?.topic ?? raw?.title,
-        message: raw?.message ?? raw?.description ?? "",
-        supportReply: raw?.supportReply ?? raw?.support_reply ?? null,
-        repliedAt: raw?.repliedAt ?? raw?.replied_at ?? null,
-    };
-}
-
-async function authedFetch(path: string, init?: RequestInit): Promise<Response> {
-    const baseUrl = import.meta.env.VITE_API_URL as string;
-
-    const doFetch = (token: string | null) => {
-        const headers = new Headers(init?.headers);
-        if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-        if (token) headers.set("Authorization", `Bearer ${token}`);
-
-        return fetch(`${baseUrl}${path}`, {
-            ...init,
-            headers,
-        });
-    };
-
-    const token1 = getAccessToken();
-    let res = await doFetch(token1);
-    if (res.status !== 401) return res;
-
-    try {
-        await refresh();
-        const token2 = getAccessToken();
-        res = await doFetch(token2);
-        return res;
-    } catch {
-        return res;
-    }
 }
 
 export function UserPage() {
@@ -128,25 +58,7 @@ export function UserPage() {
         try {
             setLoadingList(true);
 
-            const res = await authedFetch("/tickets/my", { method: "GET" });
-
-            if (res.status === 401) {
-                alert("Сессия истекла. Пожалуйста, войдите снова.");
-                await onLogout();
-                return;
-            }
-
-            if (!res.ok) {
-                const text = await res.text();
-                console.error("Failed to load tickets:", res.status, text);
-                alert(`Ошибка загрузки обращений: ${res.status}`);
-                return;
-            }
-
-            const data = (await res.json()) as { tickets: TicketListItem[] };
-            const list = Array.isArray(data.tickets) ? data.tickets : [];
-            const sorted = [...list].sort((a, b) => b.id - a.id);
-
+            const sorted = await listMyTickets();
             setTickets(sorted);
 
             if (!selectedId && sorted[0]?.id) setSelectedId(sorted[0].id);
@@ -162,24 +74,8 @@ export function UserPage() {
     const loadDetail = async (id: number) => {
         try {
             setLoadingDetail(true);
-
-            const res = await authedFetch(`/tickets/my/${id}`, { method: "GET" });
-
-            if (res.status === 401) {
-                alert("Сессия истекла. Пожалуйста, войдите снова.");
-                await onLogout();
-                return;
-            }
-
-            if (!res.ok) {
-                const text = await res.text();
-                console.error("GET /tickets/:id failed:", res.status, text);
-                alert(`Ошибка загрузки обращения: ${res.status}`);
-                return;
-            }
-
-            const data = (await res.json()) as { ticket: any };
-            setSelected(normalizeTicketDetail(data.ticket));
+            const detail = await getMyTicket(id);
+            setSelected(detail);
         } catch (e) {
             console.error(e);
             alert("Ошибка сети при загрузке обращения (см. console).");
@@ -216,23 +112,7 @@ export function UserPage() {
         try {
             setCreating(true);
 
-            const res = await authedFetch("/tickets", {
-                method: "POST",
-                body: JSON.stringify({ title: t, description: d }),
-            });
-
-            if (res.status === 401) {
-                alert("Сессия истекла. Пожалуйста, войдите снова.");
-                await onLogout();
-                return;
-            }
-
-            if (!res.ok) {
-                const text = await res.text();
-                console.error("Create ticket failed:", res.status, text);
-                alert(`Ошибка создания обращения: ${res.status}`);
-                return;
-            }
+            await createMyTicket({ title: t, description: d });
 
             setTitle("");
             setDescription("");
@@ -406,6 +286,7 @@ export function UserPage() {
                                     <div className={styles.detailTitle}>{`Обращение ${selected.ticketNumber}`}</div>
                                     <div className={styles.detailDate}>{`от ${selected.createdAt}`}</div>
                                 </div>
+
                                 <div className={styles.detailGrid}>
                                     {loadingDetail ? (
                                         <div className={styles.muted}>Загрузка...</div>
@@ -427,7 +308,7 @@ export function UserPage() {
                                                 <div className={styles.detailLabel}>Ответ поддержки</div>
                                                 <textarea
                                                     className={styles.textarea}
-                                                    value={selected.supportReply?.trim() ? selected.supportReply : "Ответа пока нет"}
+                                                    value={"Ответа пока нет"}
                                                     readOnly
                                                 />
                                             </div>
